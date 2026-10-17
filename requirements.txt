@@ -1,0 +1,19 @@
+# --- app ---------------------------------------------------------------
+streamlit>=1.40.0
+pandas>=2.0
+numpy>=1.26
+plotly>=5.20
+requests>=2.31
+
+# --- classical NLP -----------------------------------------------------
+scikit-learn>=1.4
+rapidfuzz>=3.6
+
+# --- semantic search (ChromaDB + ONNX MiniLM embeddings, no PyTorch needed) --
+chromadb>=1.0.0
+onnxruntime>=1.17
+
+# --- documents ---------------------------------------------------------
+python-docx>=1.1
+reportlab>=4.0
+pypdf>=4.0

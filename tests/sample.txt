@@ -1,0 +1,13 @@
+Meeting: Kickoff
+Date: 2026-10-08
+Attendees: Anita Sharma, Rahul Mehta
+
+[00:00] Anita Sharma: Good morning everyone, thanks for joining the kickoff for the new product launch.
+[00:25] Rahul Mehta: What is the current state of the beta build?
+[00:40] Anita Sharma: The beta has been running for two weeks with only minor crashes.
+[01:10] Rahul Mehta: I'll finish the payment testing by next Friday and share the results with everyone.
+[01:45] Anita Sharma: Okay, we decided to launch on the fifteenth of next month.
+[02:00] Anita Sharma: Karan, can you prepare the marketing budget proposal by Monday?
+[02:10] Rahul Mehta: Sure.
+[02:20] Anita Sharma: We should also update the legal terms soon, but nobody is free this week.
+[02:40] Anita Sharma: Thanks everyone, that is all for today.
