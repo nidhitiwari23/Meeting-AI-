@@ -5,6 +5,7 @@ import streamlit as st
 
 from core import db, mailer, mom as momlib
 from ui import components as C, nav
+from views import _email
 
 
 def render() -> None:
@@ -78,9 +79,7 @@ def render() -> None:
         if status != "accepted":
             C.empty_state("lock", "Accept the minutes first", "Review the draft and press “Accept minutes”. Then you can add recipients and send.")
             return
-        if not mailer.is_configured():
-            st.warning("Email sending is not set up on this server. You can still open the message in your own mail app below, "
-                       "or add SMTP details in **Settings → Email**.")
+        email_ready = _email.setup_panel("mom")
         att_attendees = ", ".join(a for a in (m.get("attendees") or []) if "@" in a)
         rec = st.text_area("Recipients", value=st.session_state.get(f"mom_rec_{mid}", att_attendees), height=80, key=f"mom_rec_{mid}",
                            placeholder="priya@company.com, rahul@company.com", help="Separate addresses with commas, spaces or new lines.")
@@ -101,7 +100,7 @@ def render() -> None:
             st.markdown(f'<div class="mx-card" style="background:#fff;color:#1b2140;max-height:340px;overflow:auto">{body_html}</div>', unsafe_allow_html=True)
         st.link_button("Open in my mail app instead", mailer.mailto_link(good, subject, body_text), disabled=not good)
 
-        if mailer.is_configured():
+        if email_ready:
             st.write("")
             confirm = st.checkbox(f"I confirm: send these minutes to {len(good)} recipient(s)" if good else "I confirm sending", key=f"mom_conf_{mid}", disabled=not good)
             if st.button("Send minutes", type="primary", disabled=not (good and confirm and not bad), key="mom_send"):

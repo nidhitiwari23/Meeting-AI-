@@ -5,6 +5,7 @@ import streamlit as st
 
 from core import db, followups as fu, llm, mailer
 from ui import components as C, nav
+from views import _email
 
 KIND_ICON = {"Share recap": ("forward_to_inbox", "info"), "Task reminder": ("alarm", "warn"), "Assign owners": ("person_add", "bad"),
              "Meeting reminder": ("event", "ok")}
@@ -31,6 +32,7 @@ def render() -> None:
         st.rerun()
 
     st.info("MeetingAI only **drafts** these messages. Nothing is sent until you press **Send** and confirm.", icon="🛡️")
+    email_ready = _email.setup_panel("fu")
     rows = db.list_followups({"Suggested": "suggested", "Sent": "sent", "Dismissed": "dismissed", "All": None}[status])
     if f_m:
         rows = [r for r in rows if r["meeting_id"] == f_m]
@@ -67,7 +69,7 @@ def render() -> None:
             if b4.button("Dismiss", key=f"fu_d_{r['id']}", use_container_width=True):
                 db.update_followup(r["id"], status="dismissed")
                 st.rerun()
-            if mailer.is_configured():
+            if email_ready:
                 ok = st.checkbox(f"Yes, send this to {len(good)} recipient(s)" if good else "Add a recipient to enable sending", key=f"fu_c_{r['id']}", disabled=not good)
                 if st.button("Send now", type="primary", key=f"fu_send_{r['id']}", disabled=not (ok and good and not bad)):
                     sent, msg = mailer.send(good, r["subject"], body)
