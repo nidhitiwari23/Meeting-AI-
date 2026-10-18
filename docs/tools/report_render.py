@@ -306,7 +306,7 @@ def build_pdf(md: str, cover: dict, base_dir: Path, out_path: Path) -> None:
             c.restoreState()
             c.setStrokeColor(HexColor("#7C6CFF")); c.setLineWidth(1.2); c.roundRect(22 * mm, cy, cw, chh, 3 * mm, fill=0, stroke=1)
         # meta strip
-        yy = 46 * mm
+        yy = 49 * mm
         c.setFillColor(HexColor("#A9B4F5")); c.setFont(F, 8)
         xcol = 22 * mm
         colw = (W - 44 * mm) / max(1, len(d["meta"]))
@@ -322,8 +322,19 @@ def build_pdf(md: str, cover: dict, base_dir: Path, out_path: Path) -> None:
             if value.startswith("http"):
                 c.linkURL(value, (xcol, yy - 7 * mm, xcol + colw - 4 * mm, yy + 3 * mm), relative=0)
             xcol += colw
+        team = d.get("team") or []
+        if team:
+            c.setFillColor(HexColor("#8E99E0")); c.setFont(FB, 7.6); c.drawString(22 * mm, 32.5 * mm, "TEAM MEMBERS")
+            c.setStrokeColor(HexColor("#3B4590")); c.setLineWidth(0.6); c.line(22 * mm, 30.4 * mm, W - 22 * mm, 30.4 * mm)
+            half = (W - 44 * mm) / 2
+            for k, (nm, roll) in enumerate(team):
+                tx = 22 * mm + (k % 2) * half
+                ty = 25.6 * mm - (k // 2) * 5.6 * mm
+                c.setFillColor(colors.white); c.setFont(F, 9.2); c.drawString(tx, ty, nm)
+                c.setFillColor(HexColor("#A78BFA")); c.setFont(FB, 9.2)
+                c.drawString(tx + c.stringWidth(nm + "  ", F, 9.2), ty, roll)
         c.setFillColor(HexColor("#6F7BC4")); c.setFont(F, 7.6)
-        c.drawString(22 * mm, 16 * mm, d.get("footer", ""))
+        c.drawString(22 * mm, 12 * mm, d.get("footer", ""))
         c.restoreState()
 
     def draw_body(c, d):
@@ -619,6 +630,13 @@ def build_docx(md: str, cover: dict, base_dir: Path, out_path: Path) -> None:
                 pass
         else:
             r = p.add_run(value); r.font.size = Pt(9); r.font.color.rgb = rgb("#FFFFFF"); r.font.name = FONT
+    if cover.get("team"):
+        p = c0.add_paragraph(); p.paragraph_format.space_before = Pt(10); p.paragraph_format.space_after = Pt(0)
+        r = p.add_run("TEAM MEMBERS"); r.bold = True; r.font.size = Pt(7.5); r.font.color.rgb = rgb("#8E99E0"); r.font.name = FONT
+        for nm, roll in cover["team"]:
+            p = c0.add_paragraph(); p.paragraph_format.space_after = Pt(0)
+            r = p.add_run(nm + "  "); r.font.size = Pt(9.5); r.font.color.rgb = rgb("#FFFFFF"); r.font.name = FONT
+            r = p.add_run(roll); r.bold = True; r.font.size = Pt(9.5); r.font.color.rgb = rgb("#A78BFA"); r.font.name = FONT
     doc.add_page_break()
 
     # ------------------------------------------------------------ header / footer
@@ -778,8 +796,11 @@ def build_docx(md: str, cover: dict, base_dir: Path, out_path: Path) -> None:
 
 
 # ================================================================================================ driver
+TEAM = [("Nidhi Tiwari", "A033"), ("Dhruvi Devalia", "A044"), ("Jivesh Gawde", "A057"), ("Yashika Parmar", "A061")]
+
+
 def default_cover(doc_title: str, kicker: str, title_lines: list[str], tagline_lines: list[str], site: str, repo: str, image: str | None) -> dict:
-    return {"doc_title": doc_title, "kicker": kicker, "title_lines": title_lines, "tagline_lines": tagline_lines, "image": image,
+    return {"team": TEAM, "doc_title": doc_title, "kicker": kicker, "title_lines": title_lines, "tagline_lines": tagline_lines, "image": image,
             "meta": [("Live application", site), ("Source code", repo), ("Edition", date.today().strftime("%B %Y"))],
             "footer": "MeetingAI  ·  hybrid NLP + LLM meeting intelligence  ·  Streamlit · SQLite · ChromaDB · pyannote",
             "footer_left": "MeetingAI  ·  " + doc_title}
