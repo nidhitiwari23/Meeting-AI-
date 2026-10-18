@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 
 import streamlit as st
@@ -36,16 +37,21 @@ def panel(m: dict, segs: list[dict]) -> None:
         else:
             st.caption("Every speaker already has a name. You can still correct them here.")
         cache_key = f"sug_{mid}"
+        typed = st.text_input("Who attended? (comma-separated names)", value=", ".join(attendees), key=f"w_att_{mid}",
+                              placeholder="e.g. Priya Nair, Rahul Mehta, Anita Sharma",
+                              help="Names MeetingAI should look for in the conversation (\"Thanks Priya\", \"I'm Rahul\"). Needed when nobody introduces themselves.")
+        pool = [a.strip() for a in re.split(r"[,;]+", typed) if a.strip()]
         if cache_key not in st.session_state:
-            st.session_state[cache_key] = speakers.suggest(segs, attendees, m["title"], use_llm=False)
-        c1, c2 = st.columns([1, 3])
-        if c1.button("Ask AI for suggestions", key=f"w_ai_{mid}", disabled=not (llm.is_available() and anon),
-                     help="The AI must quote the exact words that prove each name; anything it cannot prove stays empty."):
+            st.session_state[cache_key] = speakers.suggest(segs, pool, m["title"], use_llm=False)
+        c1, c2 = st.columns([1.2, 3])
+        if c1.button("Find names in the conversation", key=f"w_ai_{mid}", disabled=not anon,
+                     help="Searches introductions and name mentions; with an AI model it must quote the exact words that prove each name."):
             with st.spinner("Reading the conversation…"):
-                st.session_state[cache_key] = speakers.suggest(segs, attendees, m["title"], use_llm=True)
-        if attendees:
-            c2.caption("Attendees: " + ", ".join(attendees))
+                st.session_state[cache_key] = speakers.suggest(segs, pool, m["title"], use_llm=llm.is_available())
         sug = st.session_state[cache_key]
+        if anon and not any(l in sug for l in anon):
+            c2.warning("No names were said clearly in this recording (no 'I'm Priya', no 'Thanks Rahul'), so nothing can be suggested. "
+                       "Type each person's name below (the audio sample helps you tell them apart) - or save their voices so next time it is automatic.")
         samples = speakers.speaker_samples(segs, 2)
         new_names: dict[str, str] = {}
         for i, lab in enumerate(labels):
@@ -88,6 +94,8 @@ def panel(m: dict, segs: list[dict]) -> None:
                                 help="Recomputes tasks/owners so they use the real names (replaces machine-extracted items).")
         if b1.button("Apply names", type="primary", key=f"w_apply_{mid}"):
             dup = [n for n in new_names.values() if n.strip()]
+            if pool:
+                db.update_meeting(mid, attendees=pool)
             changed = speakers.apply_names(mid, {k: v for k, v in new_names.items()})
             st.session_state.pop(cache_key, None)
             if reanalyse:
