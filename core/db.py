@@ -157,6 +157,12 @@ CREATE TABLE IF NOT EXISTS email_log (
     error TEXT,
     sent_at TEXT
 );
+CREATE TABLE IF NOT EXISTS voiceprints (
+    name TEXT PRIMARY KEY,
+    voiceprint TEXT NOT NULL,
+    source TEXT,
+    created_at TEXT
+);
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -605,6 +611,21 @@ def log_analysis(mid: str, item_type: str, item_text: str, classical_label: str 
 def log_email(mid: str | None, recipients: str, subject: str, status: str, error: str = "") -> None:
     execute("INSERT INTO email_log(meeting_id,recipients,subject,status,error,sent_at) VALUES(?,?,?,?,?,?)",
             (mid, recipients, subject, status, error, now()))
+
+
+# ---------------------------------------------------------------- voice profiles
+def save_voiceprint(name: str, voiceprint: str, source: str = "") -> None:
+    execute("INSERT INTO voiceprints(name,voiceprint,source,created_at) VALUES(?,?,?,?) "
+            "ON CONFLICT(name) DO UPDATE SET voiceprint=excluded.voiceprint,source=excluded.source,created_at=excluded.created_at",
+            (name.strip(), voiceprint, source, now()))
+
+
+def list_voiceprints() -> list[dict]:
+    return query("SELECT name,voiceprint,source,created_at FROM voiceprints ORDER BY name")
+
+
+def delete_voiceprint(name: str) -> None:
+    execute("DELETE FROM voiceprints WHERE name=?", (name,))
 
 
 # ---------------------------------------------------------------- stats

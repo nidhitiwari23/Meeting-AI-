@@ -8,7 +8,7 @@ import streamlit as st
 
 st.set_page_config(page_title="MeetingAI", page_icon="🎙️", layout="wide", initial_sidebar_state="expanded")
 
-from core import db, llm, mailer, stt  # noqa: E402
+from core import db, diarize, llm, mailer, stt  # noqa: E402
 from core.config import secret  # noqa: E402
 from ui import components as C, nav, theme  # noqa: E402
 
@@ -63,6 +63,8 @@ def sidebar() -> None:
              f'{dot(bool(provs))}AI models: <b>{", ".join(provs) if provs else "offline mode"}</b><br>'
              f'{dot(bool(st_["groq"] or st_["assemblyai"] or st_["local"]))}Speech-to-text: '
              f'<b>{"ready" if (st_["groq"] or st_["assemblyai"] or st_["local"]) else "not set"}</b><br>'
+             f'{dot(bool(diarize.choose_engine(db.get_setting("speaker_engine", "auto"))))}Speaker names: '
+             f'<b>{"pyannote" if diarize.choose_engine(db.get_setting("speaker_engine", "auto")) in ("pyannoteai", "pyannote-local") else ("AssemblyAI" if diarize.choose_engine(db.get_setting("speaker_engine", "auto")) else "not set")}</b><br>'
              f'{dot(mailer.is_configured())}Email: <b>{"ready" if mailer.is_configured() else "not set"}</b></div>')
         if secret("APP_PASSWORD") and st.button("Lock", icon=":material/lock:", use_container_width=True):
             st.session_state["authed"] = False

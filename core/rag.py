@@ -464,7 +464,7 @@ def answer_question(question: str, scope_meeting: str | None = None, history: li
     facts: list[dict] = []
     if "tasks" in route.intents:
         task_rows = _tasks_for(route)
-        if re.search(r"(deadlines?|due|when)", question.lower()):
+        if re.search(r"\b(deadlines?|due|when)\b", question.lower()):
             task_rows = [t for t in task_rows if t["deadline"] or t.get("deadline_text")] or task_rows
         for t in task_rows[:25]:
             facts.append({"type": "task", "row": t})

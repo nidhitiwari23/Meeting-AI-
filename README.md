@@ -4,6 +4,8 @@
 
 Hybrid design: **classical NLP first** (rules + TF-IDF/Naive Bayes + deterministic date parsing) → a **confidence gateway** → **free LLMs only where needed** (Groq / Gemini / OpenRouter) → every LLM result **validated against the transcript**. Storage: **SQLite + FTS5** (source of truth) and **ChromaDB** (semantic index).
 
+🗣️ **Who said what:** audio is split into speakers with **pyannote** (hosted pyannoteAI API, or local `pyannote.audio` via `requirements-local.txt`). Save a person's voice once (**Settings → Voices**) and they appear by name in every future recording; otherwise use the **Who is who?** panel (name suggestions from the conversation).
+
 📘 Full documentation: [`docs/PROJECT_GUIDE.md`](docs/PROJECT_GUIDE.md) (also as `.docx` / `.pdf` in `docs/`).
 
 ## Run locally
@@ -26,7 +28,8 @@ Copy `.streamlit/secrets.toml.example` → `.streamlit/secrets.toml` and add:
 |---|---|---|
 | `GROQ_API_KEY` | console.groq.com | Whisper speech-to-text + Llama AI |
 | `GEMINI_API_KEY` | aistudio.google.com/apikey | long-context AI (backup) |
-| `ASSEMBLYAI_API_KEY` | assemblyai.com | speaker identification (optional) |
+| `PYANNOTEAI_API_KEY` | dashboard.pyannote.ai → API Keys | **who said what**: pyannote separates speakers; saved voice profiles show real names |
+| `ASSEMBLYAI_API_KEY` | assemblyai.com | alternative anonymous speaker labels (optional) |
 | `SMTP_*` | Gmail app password | sending MoM / follow-up emails (optional) |
 | `APP_PASSWORD` | you choose | password gate for public deployments |
 
@@ -42,5 +45,5 @@ You can also paste keys in the app under **Settings** (kept for the session only
 ## Tests
 
 ```bash
-python -m pytest tests -q      # 60 tests
+python -m pytest tests -q      # 79 tests
 ```

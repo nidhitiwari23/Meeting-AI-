@@ -35,7 +35,7 @@ This guide explains the whole project in plain language - from "what is it?" to 
 
 MeetingAI is a web application. You give it a meeting - a **recording** (audio or video) or a **written transcript** - and it:
 
-- turns speech into text (a **transcript**) with speaker names and timestamps,
+- turns speech into text (a **transcript**) with timestamps, and shows **who said what by name** ("Priya: ...") using pyannote speaker recognition,
 - writes a **summary** (overview, key points, decisions, conclusions),
 - finds the **action items** - who must do what, and by when,
 - finds **decisions** that were made,
@@ -68,7 +68,7 @@ The left sidebar has all the pages.
 | **Dashboard** | Your overview: number of meetings, tasks done and pending, overdue tasks, upcoming deadlines and events, recent meetings, charts, and the health of the NLP engine. |
 | **New Meeting** | Upload audio/video/transcript files (or paste a transcript) and watch it get analysed. |
 | **Meeting Library** | All saved meetings as cards. Search, sort, open, ask questions, or delete. |
-| **Meeting Details** | Opened from the library. Tabs: *Overview* (summary, key points, topics, participants), *Transcript* (speaker colours, timestamps, search, audio player), *Action items* (editable table), *Decisions & events*, and *How it was analysed* (why each item was trusted or double-checked). |
+| **Meeting Details** | Opened from the library. Tabs: *Overview* (summary, key points, topics, participants), *Transcript* (speaker colours, timestamps, search, audio player, and the **Who is who?** panel for naming speakers), *Action items* (editable table), *Decisions & events*, and *How it was analysed* (why each item was trusted or double-checked). |
 | **Ask MeetingAI** | The chatbot. Ask about one meeting or all meetings. Answers show their sources. Chat history is saved so you can continue later. |
 | **Search** | Find anything across all meetings: smart (by meaning), keyword, or exact phrase. Shows meeting name, timestamp and the supporting text. |
 | **Action Tracker** | One central table of tasks from every meeting, with owner, deadline, status (Pending / In Progress / Completed), and source meeting. You can edit everything. |
@@ -76,7 +76,7 @@ The left sidebar has all the pages.
 | **Minutes of Meeting** | Generate, edit, accept, download (Word / PDF / Markdown) and email the minutes. |
 | **Follow-ups** | Suggested reminders and messages. You review, edit and confirm before anything is sent. |
 | **NLP Lab** | A "look under the hood" page: try the NLP live, see accuracy numbers, see how often the AI model was needed, and tune the settings. |
-| **Settings** | Connect free AI services, set confidence thresholds, set up email, back up and restore data. |
+| **Settings** | Connect free AI services, **save team voices (Voices tab)**, set confidence thresholds, set up email, back up and restore data. |
 
 ## 4. How to use it, step by step
 
@@ -138,6 +138,16 @@ Events ("demo on Thursday at 11 AM") and task deadlines are placed automatically
 
 Open **Follow-ups**. Each card is a draft: a recap, a reminder for a person with pending tasks, a request for owners for unassigned tasks, or a reminder for an upcoming event. Edit the text, add email addresses, and either **Send now** (after ticking the confirmation) or **Open in mail app**. Press **Improve with AI** to polish the tone (facts stay the same).
 
+### 4.8 Showing who said what (speaker names)
+
+Audio has no names in it - a recording is just sound. MeetingAI uses **pyannote** to work out *which voice is which* ("Speaker 1", "Speaker 2"...), and then helps you put real names on them in three ways:
+
+1. **Voice profiles (automatic, best).** Go to **Settings → Voices**, type a person's name and upload (or record) a 5-30 second clip of only that person talking. pyannoteAI turns it into a *voiceprint*. From then on, every new recording that contains that voice shows **their name** automatically. Voices it does not know stay "Speaker N".
+2. **Suggestions from the conversation.** Open the meeting → **Transcript** → **Who is who?**. MeetingAI suggests names from what people said - "Hi, I'm Priya", "Rahul, can you give the update?" (then the next voice is Rahul), "Thanks Rahul". Every suggestion shows its evidence and confidence. You can also press **Ask AI for suggestions**; the AI must quote the exact words that prove a name.
+3. **Type it yourself.** In the same panel, play the short audio sample under each speaker, type the name, and press **Apply names**. Task owners and the search index are updated too.
+
+Tip: after naming someone, press **Remember this voice** to save their voiceprint, so you never have to name them again.
+
 ---
 
 ## 5. How it works inside - the story of one meeting
@@ -149,8 +159,11 @@ Imagine you upload a recording. Here is what happens, in order:
         |
  2. FFmpeg        converts any audio/video into small, clean audio chunks
         |
- 3. SPEECH-TO-TEXT   Whisper turns the audio into text with timestamps
-        |           (AssemblyAI can also label who is speaking)
+ 3. SPEECH-TO-TEXT   Whisper turns the audio into text with WORD timestamps
+        |
+ 3b. WHO SPOKE WHEN  pyannote splits the audio into voices (Speaker 1, 2, 3...)
+        |           saved voice profiles turn voices into NAMES (Priya, Rahul...)
+        |           every word is given to the speaker who was talking
         |
  4. SAVE          transcript is stored in the SQLite database
         |
@@ -191,7 +204,8 @@ If you have no AI key, steps 7 is skipped. The app still works using classical N
 | Understanding sentences (classical NLP) | **scikit-learn** (TF-IDF, Naive Bayes, Logistic Regression), **regular expressions**, **rapidfuzz** | Fast, explainable, free, offline. They give a confidence score and show their reasoning. |
 | Dates like "next Friday" | Our own **date resolver** | Deterministic code, tested with unit tests. The AI is never allowed to invent calendar dates. |
 | Audio/video conversion | **FFmpeg** | The standard tool for it. |
-| Speech to text | **Groq Whisper (large-v3-turbo)**, **AssemblyAI** (optional, speaker labels), local Whisper (optional) | Whisper is the best open speech model; Groq runs it very fast on a free tier. |
+| Speech to text | **Groq Whisper (large-v3-turbo)**, local Whisper (optional) | Whisper is the best open speech model; Groq runs it very fast on a free tier. |
+| Who is speaking | **pyannote** - hosted **pyannoteAI** API (works on free hosting, can recognise saved voices by name) or **pyannote.audio** run locally (needs PyTorch + a Hugging Face token); **AssemblyAI** as an alternative | pyannote is the best-known open speaker-diarization toolkit. The hosted API gives its quality without PyTorch's ~2 GB, which the free cloud tier cannot hold. |
 | AI language models | **Groq (Llama)**, **Google Gemini**, **OpenRouter free models** | All have free tiers. If one is busy or rate-limited, the app automatically tries the next. |
 | Word / PDF export | **python-docx**, **ReportLab** | Pure Python, no Word installation needed. |
 | Email | **SMTP** (Gmail app password, Brevo, Outlook...) | Works with any email provider; no paid service required. |
@@ -214,7 +228,20 @@ ChromaDB is a *derived* index: if it is ever lost, it is rebuilt from SQLite wit
 
 Free tiers have limits (requests per minute, tokens per day). The app's router (`core/llm.py`) tries Groq first; if it is rate-limited or errors, it tries Gemini, then OpenRouter. For very long meetings it prefers Gemini because it can read much more text at once. The app only asks the LLM for what it needs (one call for the summary, one batched call for uncertain items), so free limits last.
 
-### 6.5 Why no PyTorch?
+### 6.5 Why pyannote - and why through a hosted API?
+
+**pyannote** is the leading open-source toolkit for *speaker diarization* ("who spoke when"). Run on your own machine it needs **PyTorch** (about 2 GB of libraries), a free **Hugging Face token**, and a model licence you must accept. That is fine on a laptop but **does not fit on free hosting** (about 1 GB of memory).
+
+So MeetingAI supports two ways of using pyannote:
+
+| Way | Works on Streamlit Cloud? | Gives names? |
+|---|---|---|
+| **pyannoteAI hosted API** (`PYANNOTEAI_API_KEY`) | Yes | Yes - with saved voice profiles |
+| **pyannote.audio on your own PC** (`HF_TOKEN` + `pip install pyannote.audio`) | No | Only "Speaker 1/2/3" (you add names) |
+
+The app picks automatically (Settings → AI & speech → Speaker engine). If a speaker service fails or runs out of credits, the transcript is still saved - with a single speaker and a clear warning.
+
+### 6.6 Why no PyTorch?
 
 PyTorch is large (hundreds of MB). Free hosting gives about 1 GB of memory. The ONNX version of the MiniLM embedding model is small and fast, so semantic search works on the free tier.
 
@@ -229,7 +256,8 @@ PyTorch is large (hundreds of MB). Free hosting gives about 1 GB of memory. The 
 | Feature | NLP task |
 |---|---|
 | Speech to text | Automatic speech recognition (ASR) |
-| "Speaker A / Speaker B" | Speaker diarization |
+| "Speaker A / Speaker B" | Speaker diarization (pyannote) |
+| "Speaker B" -> "Priya" | Speaker identification (voiceprints) + name inference from the text (self-introductions, being addressed) |
 | Summary | Abstractive / extractive summarisation |
 | Finding tasks and decisions | Sentence classification, information extraction |
 | "Priya will send it" → owner = Priya | Named entities, semantic roles |
@@ -260,6 +288,19 @@ LLMs are brilliant at nuance but can be wrong, slow, and rate-limited. So we use
 - an optional **second look** at the whole transcript to catch tasks the rules missed.
 
 And we never trust them blindly (section 9).
+
+### 7.4 Speaker diarization and speaker names, step by step
+
+1. **Word timestamps.** Whisper returns every word with its start and end time.
+2. **Diarization.** pyannote listens to the whole recording and returns *turns*: `Speaker 1: 0.0-3.2 s`, `Speaker 2: 3.4-9.0 s`...
+3. **Alignment** (`core/diarize.py` -> `assign_speakers`). Each word is handed to the speaker whose turn contains the word's midpoint. A sentence is split exactly where the speaker changes. One-word interruptions ("yeah") do not break a turn in pieces.
+4. **Voice matching (optional).** If you saved voice profiles, MeetingAI asks pyannoteAI's *identify* job to compare each voice with the voiceprints. A voice that matches well enough (default strictness 60 out of 100) gets the **name**; the rest remain Speaker N.
+5. **Name suggestions** (`core/speakers.py`) for anonymous voices, from the transcript:
+   - *self-introduction* ("I'm Priya") - strong evidence,
+   - *being addressed* ("Rahul, can you..." makes the next voice Rahul; "Thanks Rahul" makes the previous voice Rahul) - medium,
+   - *elimination* (one unnamed voice and one unused attendee) - weak,
+   - *LLM* (optional) - must quote exact words and the name must be an attendee or appear in the transcript.
+6. **You confirm.** Suggestions are never applied silently. **Apply names** renames the transcript, task owners, decisions and the attendee list, and refreshes the search index.
 
 ---
 
@@ -353,7 +394,8 @@ Chat sessions, messages, sources and metadata are saved, so you can continue a c
 | API keys | Never stored by the app. Environment variables, `secrets.toml`, or typed in Settings (kept in the browser session only). |
 
 **What leaves your computer?** Only if you configure AI services:
-- Audio you transcribe goes to Groq or AssemblyAI.
+- Audio you transcribe goes to Groq (text) and, if speaker recognition is on, to pyannoteAI (or AssemblyAI). Local pyannote keeps audio on your machine.
+- **Voiceprints** (the voice fingerprints) are stored in your own database. pyannoteAI does not keep them for you. Only create a voice profile for someone who agreed to it, and delete it from Settings → Voices any time.
 - Transcript text goes to Groq / Gemini / OpenRouter when the LLM is used. You can turn this off in *New Meeting* ("Use AI model" switch) - then everything stays local (apart from audio transcription).
 
 **On free cloud hosting**, the disk is temporary: data can vanish when the app restarts. Use **Settings → Data & backup** to download a backup `.zip` regularly, and restore it after a restart.
@@ -362,7 +404,7 @@ Chat sessions, messages, sources and metadata are saved, so you can continue a c
 
 ### 11.1 Database tables
 
-`meetings`, `segments` (+ `segments_fts` search index), `summaries`, `decisions`, `tasks`, `events`, `mom`, `chat_sessions`, `chat_messages`, `followups`, `analysis_log` (gateway decisions), `email_log`, `settings`.
+`meetings`, `segments` (+ `segments_fts` search index), `voiceprints`, `summaries`, `decisions`, `tasks`, `events`, `mom`, `chat_sessions`, `chat_messages`, `followups`, `analysis_log` (gateway decisions), `email_log`, `settings`.
 
 ---
 
@@ -381,7 +423,9 @@ nlp+agentic ai/
 │   ├─ config.py           Paths, defaults, secret lookup
 │   ├─ db.py               SQLite tables and every read/write function
 │   ├─ parsing.py          Reads txt / vtt / srt / docx / pdf transcripts
-│   ├─ stt.py              Speech-to-text (FFmpeg, Groq, AssemblyAI, local Whisper)
+│   ├─ stt.py              Speech-to-text (FFmpeg, Groq, AssemblyAI, local Whisper) + word timestamps
+│   ├─ diarize.py          pyannote: who spoke when, voice profiles, aligning words to speakers
+│   ├─ speakers.py         Name suggestions for anonymous speakers and applying names
 │   ├─ dates.py            Finds and converts "next Friday", "end of month"...
 │   ├─ seed_data.py        Training and test sentences for the classifier
 │   ├─ nlp.py              Cleaning, rules, Naive Bayes, owner / deadline / event extraction
@@ -403,8 +447,10 @@ nlp+agentic ai/
 ├─ views/                  One file per page
 │   ├─ dashboard.py  upload.py  library.py  meeting.py  chat.py  search.py
 │   ├─ tracker.py  calendar.py  mom.py  followups.py  nlplab.py  settings.py
-│   └─ _tasks.py           Editable task table used by two pages
-├─ tests/                  60 automated tests
+│   ├─ _tasks.py           Editable task table used by two pages
+│   ├─ _speakers.py        The 'Who is who?' panel (naming speakers, saving voices)
+│   └─ _email.py           'Connect your email' panel
+├─ tests/                  79 automated tests
 └─ docs/                   This guide
 ```
 
@@ -439,6 +485,14 @@ streamlit run app.py
 
 The app opens at **http://localhost:8501**. The first time you analyse a meeting, the small embedding model (about 80 MB) downloads automatically.
 
+### Optional: run pyannote on your own PC (no hosted API)
+
+```
+pip install -r requirements-local.txt
+```
+
+Then create a free token at huggingface.co/settings/tokens, **accept the model terms** on the pages huggingface.co/pyannote/speaker-diarization-3.1 and huggingface.co/pyannote/segmentation-3.0, and set `HF_TOKEN`. Local pyannote gives "Speaker 1/2/3" labels (naming is then done in the **Who is who?** panel). It is slow on CPU and cannot run on the free Streamlit Cloud tier.
+
 ### Adding keys permanently
 
 Copy `.streamlit/secrets.toml.example` to `.streamlit/secrets.toml` and fill in what you have. This file is ignored by git, so it will not be uploaded.
@@ -454,6 +508,8 @@ You do not need all of them. **The best minimum is Groq** (speech + AI). Add Gem
 | **Groq** | Whisper speech-to-text and Llama AI models | Go to console.groq.com → sign in → **API Keys** → **Create API key**. Free tier, no card. |
 | **Google Gemini** | AI for long meetings (backup) | Go to aistudio.google.com/apikey → **Create API key**. Free tier. |
 | **OpenRouter** (optional) | More free models as a backup | openrouter.ai → **Keys**. Choose models ending in `:free`. |
+| **pyannoteAI** (recommended for speaker names) | pyannote speaker separation and voice recognition | dashboard.pyannote.ai -> sign up -> **API Keys** -> **Create new key**. Copy it immediately (it is shown once). Check the dashboard for current free credits and pricing. |
+| **Hugging Face token** (local pyannote only) | Running pyannote.audio on your own PC | huggingface.co/settings/tokens, and accept the pyannote model terms. |
 | **AssemblyAI** (optional) | Speaker identification for audio | assemblyai.com → sign up → copy the API key from the dashboard. Free credits. |
 | **Gmail app password** (optional) | Sending emails | Google Account → **Security** → turn on **2-Step Verification** → **App passwords** → create one named "MeetingAI". Use host `smtp.gmail.com`, port `587`, your Gmail address as user, and the 16-character app password. |
 
@@ -493,6 +549,7 @@ git push -u origin main
 ```
 GROQ_API_KEY = "gsk_..."
 GEMINI_API_KEY = "AIza..."
+PYANNOTEAI_API_KEY = "..."   # speaker names (pyannote)
 APP_PASSWORD = "choose-a-strong-password"
 ```
 
@@ -528,7 +585,7 @@ You get a link like `https://your-name-meetingai.streamlit.app`. Open it, enter 
 
 ### 17.1 Tests
 
-The project contains **60 automated tests** (run with `python -m pytest tests`):
+The project contains **79 automated tests** (run with `python -m pytest tests`), including a fake pyannoteAI server (upload, diarize, identify, voiceprint), word-to-speaker alignment, voice-sample cutting and name suggestions:
 
 - date understanding (weekdays, "end of month", vague phrases, ambiguous dates),
 - classical NLP (owners, deadlines, decisions, hedging, events),
@@ -545,8 +602,8 @@ On 42 hand-written test sentences the classical models score roughly: rules ≈ 
 
 ### 17.3 Known limits
 
-- **Speaker identification** for audio needs AssemblyAI. Without it, audio is transcribed as a single "Speaker". Text transcripts with names are fully supported, and you can rename speakers on the Transcript tab.
-- **Live AI services** (Groq, Gemini, OpenRouter, AssemblyAI) and **real email delivery** need your keys and could not be exercised with real credentials during development; those code paths were tested with fakes and local servers. Use *Settings → Test connections* after adding keys.
+- **Speaker separation and names** for audio need a speaker engine (pyannoteAI key, local pyannote, or AssemblyAI). Without one, audio is a single "Speaker". Voice-based names need saved voice profiles; otherwise use the **Who is who?** panel. Overlapping speech and very short interjections can be mislabelled. Text transcripts with names are fully supported.
+- **Live AI services** (Groq, Gemini, OpenRouter, AssemblyAI, **pyannoteAI**) and **real email delivery** need your keys and could not be exercised with real credentials during development; those code paths were tested with fakes and local servers. Use *Settings → Test connections* after adding keys.
 - Free AI tiers have rate limits and change model names over time.
 - English is the main supported language.
 - Very vague scheduling ("sometime next quarter") is shown as text and not put on the calendar.
@@ -563,6 +620,9 @@ On 42 hand-written test sentences the classical models score roughly: rules ≈ 
 | Answers say "direct retrieval (no AI model)" | No LLM key is configured. Add Groq or Gemini in Settings. |
 | "All LLM providers failed" | Rate limit or wrong key. Try *Settings → Test connections*, wait a minute, or add a second provider. |
 | Email: "server rejected the login" | For Gmail you must use an **App password**, not your normal password. |
+| Everything says "Speaker" / "Speaker 1" | Add a `PYANNOTEAI_API_KEY` (Settings -> AI & speech) and re-upload; or name voices in Transcript -> **Who is who?**. |
+| "pyannoteAI says a subscription or credits are required (402)" | Your pyannoteAI account has no credits left. Check dashboard.pyannote.ai. The transcript is still saved with one speaker. |
+| A person is labelled with the wrong name | Raise **Match strictness** in Settings -> Voices, or re-create that person's voice profile from a longer, cleaner clip. |
 | Search finds nothing | Check the meeting finished processing; try *Settings → Rebuild semantic index*. |
 | Meetings disappeared on the hosted app | The free disk is temporary. Restore your backup (Settings → Data & backup). |
 | First analysis is slow | The embedding model downloads once (about 80 MB). |
@@ -606,4 +666,5 @@ On 42 hand-written test sentences the classical models score roughly: rules ≈ 
 **TF-IDF** - a way of scoring how important a word is in a sentence compared with all others.
 **Transcript** - the written text of a meeting.
 **Vector database (ChromaDB)** - a database that finds items by similarity of meaning.
+**Voiceprint** - a compact numeric fingerprint of a person's voice, used to recognise them in later recordings.
 **Whisper** - OpenAI's open speech-recognition model.

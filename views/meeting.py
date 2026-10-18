@@ -11,7 +11,7 @@ from core import db, gateway, ics, llm, pipeline, rag
 from core.dates import pretty
 from core.parsing import fmt_ts, segments_to_text
 from ui import components as C, nav
-from views import _tasks
+from views import _speakers, _tasks
 
 
 def render() -> None:
@@ -147,23 +147,8 @@ def render() -> None:
             st.markdown(C.transcript_html(view, terms, tag_map, list(speakers)), unsafe_allow_html=True)
         else:
             C.empty_state("search_off", "Nothing matches", "Try a different word or clear the speaker filter.")
-        d1, d2 = st.columns([1, 3])
-        d1.download_button("Download transcript", segments_to_text(segs), file_name=f"{m['title']}.txt", key="m_dl")
-        with d2.expander("Rename speakers"):
-            st.caption("Diarization labels such as “Speaker A” can be replaced with real names. This also updates task owners.")
-            new_names = {}
-            cols = st.columns(min(3, max(1, len(speakers))))
-            for i, sp in enumerate(speakers):
-                new_names[sp] = cols[i % len(cols)].text_input(sp, value=sp, key=f"m_rn_{i}")
-            if st.button("Apply names", key="m_rn_go"):
-                for old, new in new_names.items():
-                    if new.strip() and new.strip() != old:
-                        db.rename_speaker(mid, old, new.strip())
-                att = list(dict.fromkeys(new_names[s].strip() or s for s in speakers if s.lower() not in ("speaker", "unknown")))
-                db.update_meeting(mid, attendees=att)
-                rag.index_meeting(mid)
-                st.toast("Speakers renamed", icon="✅")
-                st.rerun()
+        st.download_button("Download transcript", segments_to_text(segs), file_name=f"{m['title']}.txt", key="m_dl")
+        _speakers.panel(m, segs)
 
     # ------------------------------------------------------------ tasks
     with tab_tasks:

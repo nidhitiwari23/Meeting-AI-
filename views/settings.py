@@ -16,16 +16,19 @@ KEYS = [
     ("GROQ_API_KEY", "Groq", "Fast Llama models + Whisper speech-to-text. Free at console.groq.com", "key"),
     ("GEMINI_API_KEY", "Google Gemini", "Long-context model, great for long meetings. Free at aistudio.google.com", "key"),
     ("OPENROUTER_API_KEY", "OpenRouter (optional)", "Extra free models as a backup. Free at openrouter.ai", "key"),
-    ("ASSEMBLYAI_API_KEY", "AssemblyAI (optional)", "Adds real speaker identification to audio. Free credits at assemblyai.com", "mic"),
+    ("PYANNOTEAI_API_KEY", "pyannoteAI (speaker names)", "Hosted pyannote: separates speakers and recognises saved voices. Free account at dashboard.pyannote.ai", "record_voice_over"),
+    ("ASSEMBLYAI_API_KEY", "AssemblyAI (optional)", "Alternative speaker labels (anonymous) + transcription. Free credits at assemblyai.com", "mic"),
+    ("HF_TOKEN", "Hugging Face token (local pyannote only)", "Only for running pyannote.audio on your own PC. Accept the model terms at huggingface.co/pyannote/speaker-diarization-3.1", "key"),
 ]
 
 
 def render() -> None:
     C.page_header("Settings", "Connect free AI services, tune the confidence gateway, configure email and manage your data.", "tune")
-    tabs = st.tabs(["  AI & speech  ", "  Confidence gateway  ", "  Email  ", "  Data & backup  ", "  About  "])
+    t_ai, t_voice, t_gate, t_mail, t_data, t_about = st.tabs(
+        ["  AI & speech  ", "  Voices  ", "  Confidence gateway  ", "  Email  ", "  Data & backup  ", "  About  "])
 
     # ----------------------------------------------------------------- AI
-    with tabs[0]:
+    with t_ai:
         provs = llm.available_providers()
         s = stt.provider_status()
         C.md('<div class="mx-row">' + C.chip("AI models: " + (", ".join(provs) if provs else "none (offline mode)"), "ok" if provs else "warn", "auto_awesome")
@@ -68,9 +71,20 @@ def render() -> None:
         if new != pref:
             db.set_setting("stt_pref", new)
             st.toast("Saved", icon="✅")
+        sp_opts = ["auto", "pyannoteai", "pyannote-local", "assemblyai", "none"]
+        sp_pref = db.get_setting("speaker_engine", "auto")
+        sp_new = st.selectbox("Speaker engine (who is speaking)", sp_opts, index=sp_opts.index(sp_pref) if sp_pref in sp_opts else 0,
+                              help="auto = pyannoteAI if a key exists, else local pyannote (PyTorch + HF token), else AssemblyAI. 'none' = one speaker.")
+        if sp_new != sp_pref:
+            db.set_setting("speaker_engine", sp_new)
+            st.toast("Saved", icon="✅")
+
+    # ----------------------------------------------------------------- voices
+    with t_voice:
+        _voices_tab()
 
     # ----------------------------------------------------------------- thresholds
-    with tabs[1]:
+    with t_gate:
         th = db.get_thresholds()
         C.md('<div class="mx-card"><h4>Confidence gateway</h4><div class="mx-sub">Classical NLP results below these confidence levels are double-checked by the LLM '
              '(or flagged for review). Higher = stricter = more LLM calls. See <b>NLP Lab → Threshold simulator</b> to choose sensible values.</div></div>')
@@ -91,7 +105,7 @@ def render() -> None:
             st.rerun()
 
     # ----------------------------------------------------------------- email
-    with tabs[2]:
+    with t_mail:
         cfg = mailer.smtp_config()
         C.md('<div class="mx-card"><h4>Email (SMTP)</h4><div class="mx-sub">Used to send Minutes of Meeting and follow-ups - only after you confirm each send. '
              'For Gmail: enable 2-step verification, create an <b>App password</b>, and use host <code>smtp.gmail.com</code>, port <code>587</code>. '
@@ -123,7 +137,7 @@ def render() -> None:
                     (st.success if sent else st.error)(msg)
 
     # ----------------------------------------------------------------- data
-    with tabs[3]:
+    with t_data:
         n_vec = rag.index_count()
         C.md(f'<div class="mx-card"><h4>Where is my data?</h4><div class="mx-sub">Meetings, tasks and chats live in a SQLite database; the semantic index lives in ChromaDB '
              f'({n_vec} vectors); uploaded recordings are stored on disk. On free hosting (Streamlit Cloud) this disk is <b>temporary</b> - '
@@ -191,16 +205,71 @@ def render() -> None:
                     db.delete_meeting(mt["id"])
                 for s_ in db.list_sessions():
                     db.delete_session(s_["id"])
-                db.execute("DELETE FROM events"); db.execute("DELETE FROM followups"); db.execute("DELETE FROM tasks")
+                db.execute("DELETE FROM events"); db.execute("DELETE FROM followups"); db.execute("DELETE FROM tasks"); db.execute("DELETE FROM voiceprints")
                 rag.reset_client()
                 shutil.rmtree(CHROMA_DIR, ignore_errors=True)
                 st.session_state.clear()
                 st.rerun()
 
     # ----------------------------------------------------------------- about
-    with tabs[4]:
+    with t_about:
         C.md('<div class="mx-card"><h4>MeetingAI</h4><div class="mx-sub">A hybrid NLP + LLM meeting intelligence assistant. Classical NLP (rules, TF-IDF, Naive Bayes, '
              'deterministic date parsing) runs first; a confidence gateway sends only uncertain items to a free LLM; every LLM result is validated against the transcript. '
              'Search combines ChromaDB embeddings with SQLite FTS5 keywords. Answers are grounded in retrieved evidence and say "not found" otherwise.</div></div>')
         C.md('<div class="mx-row">' + "".join(C.chip(t, "info") for t in ["Streamlit", "SQLite + FTS5", "ChromaDB", "scikit-learn", "Groq Whisper", "Gemini", "Llama", "ReportLab", "python-docx"]) + "</div>")
         st.caption("Set APP_PASSWORD in secrets to protect a public deployment.")
+
+
+def _voices_tab() -> None:
+    from core import diarize
+
+    ds = diarize.status()
+    C.md('<div class="mx-card"><h4>Voice profiles - name people automatically</h4><div class="mx-sub">pyannote splits a recording into voices (Speaker 1, Speaker 2…). '
+         'To show <b>Priya</b> instead of “Speaker 2”, MeetingAI needs to know what Priya sounds like. Add a short clip (5-30 seconds, only that person talking) '
+         'and pyannoteAI turns it into a <b>voiceprint</b> - a compact fingerprint, not the recording. Future meetings then label that voice by name. '
+         'Voices that do not match anyone stay “Speaker N”.</div></div>')
+    C.md('<div class="mx-row" style="margin:6px 0">' + C.chip("pyannoteAI: " + ("connected" if ds["pyannoteai"] else "add PYANNOTEAI_API_KEY"), "ok" if ds["pyannoteai"] else "warn", "record_voice_over")
+         + C.chip("Local pyannote: " + ("ready" if ds["local"] else "not set up"), "ok" if ds["local"] else "mute", "memory") + "</div>")
+    if not ds["pyannoteai"]:
+        st.info("Voice profiles need a **PYANNOTEAI_API_KEY** (free account at dashboard.pyannote.ai → API Keys → Create new key). "
+                "Add it on the *AI & speech* tab or in your Streamlit secrets.")
+    vps = db.list_voiceprints()
+    if vps:
+        C.section("Saved voices", "groups")
+        for v in vps:
+            c1, c2 = st.columns([5, 1])
+            c1.markdown(f"**{v['name']}** · <span style='opacity:.65'>{v['source'] or 'uploaded clip'} · {str(v['created_at'])[:10]}</span>", unsafe_allow_html=True)
+            if c2.button("Delete", key=f"vp_del_{v['name']}"):
+                db.delete_voiceprint(v["name"])
+                st.rerun()
+    C.section("Add a voice", "mic")
+    name = st.text_input("Person's name", placeholder="Priya Nair", key="vp_name")
+    up = st.file_uploader("Voice clip (up to 30 s, only this person speaking)", type=["wav", "mp3", "m4a", "ogg", "flac", "webm"], key="vp_file")
+    rec = None
+    if hasattr(st, "audio_input"):
+        rec = st.audio_input("…or record it now", key="vp_rec")
+    src = up or rec
+    if st.button("Create voice profile", type="primary", key="vp_go", disabled=not (ds["pyannoteai"] and name.strip() and src)):
+        import os
+        import tempfile
+
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                raw = os.path.join(tmp, "raw." + (src.name.rsplit(".", 1)[-1] if getattr(src, "name", None) and "." in src.name else "wav"))
+                with open(raw, "wb") as fh:
+                    fh.write(src.getvalue())
+                clip = os.path.join(tmp, "clip.mp3")
+                diarize.trim_clip(raw, clip, 30)
+                with st.spinner("Creating the voiceprint…"):
+                    vp = diarize.pyannoteai_voiceprint(clip)
+            db.save_voiceprint(name.strip(), vp, "uploaded clip")
+            st.success(f"Saved {name.strip()}'s voice profile.")
+            st.rerun()
+        except diarize.DiarizationError as e:
+            st.error(str(e))
+    thr = db.get_setting("match_threshold", diarize.DEFAULT_MATCH_THRESHOLD)
+    new_thr = st.slider("Match strictness", 30, 90, int(thr), 1, key="vp_thr",
+                        help="Higher = fewer wrong names but more people left as 'Speaker N'. pyannoteAI suggests 50-70.")
+    if new_thr != thr:
+        db.set_setting("match_threshold", new_thr)
+    st.caption("Voiceprints are stored in this app's database (included in backups). Delete a profile any time. Only create profiles for people who agreed to it.")

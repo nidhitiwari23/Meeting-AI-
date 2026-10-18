@@ -7,7 +7,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from core import db, llm, parsing, pipeline, stt
+from core import db, diarize, llm, nlp, parsing, pipeline, stt
 from core.config import MAX_UPLOAD_MB, SUPPORTED_AUDIO, SUPPORTED_TEXT, SUPPORTED_VIDEO, UPLOAD_DIR
 from ui import components as C, nav
 
@@ -38,6 +38,8 @@ def _run(title: str, meeting_date: date, tags: str, notes: str, file_name: str |
     ext = (file_name or "pasted.txt").rsplit(".", 1)[-1].lower()
     is_text = text is not None or ext in SUPPORTED_TEXT
     mid = None
+    speaker_warnings: list[str] = []
+    identified: dict = {}
     try:
         show(0.01, "Saving your upload")
         meta: dict = {}
@@ -57,13 +59,19 @@ def _run(title: str, meeting_date: date, tags: str, notes: str, file_name: str |
             path = UPLOAD_DIR / f"{mid}.{ext}"
             path.write_bytes(data)
             db.update_meeting(mid, file_path=str(path))
-            res = stt.transcribe(str(path), progress=lambda f, m: show(f, m, 0.03, 0.17), preferred=db.get_setting("stt_pref", "auto"), want_speakers=want_speakers)
+            res = stt.transcribe(str(path), progress=lambda f, m: show(f, m, 0.03, 0.17), preferred=db.get_setting("stt_pref", "auto"),
+                                 want_speakers=want_speakers, speaker_engine=db.get_setting("speaker_engine", "auto"),
+                                 voiceprints=db.list_voiceprints() if want_speakers else None)
             segments, provider, duration = res["segments"], res["provider"], res["duration"]
+            speaker_warnings, identified = res.get("warnings", []), res.get("identified", {})
+            if identified:
+                db.update_meeting(mid, attendees=sorted(set(identified.values())))
         db.replace_segments(mid, segments)
         db.update_meeting(mid, stt_provider=provider or "text", duration_sec=duration)
         out = pipeline.process_meeting(mid, lambda f, m: show(f, m, 0.2, 0.8), use_llm=use_llm)
         show(1.0, "Done")
-        st.session_state["last_result"] = {"mid": mid, "stats": out.stats}
+        st.session_state["last_result"] = {"mid": mid, "stats": out.stats, "speaker_warnings": speaker_warnings,
+                                           "identified": sorted(set(identified.values()))}
         st.toast("Meeting analysed", icon="✅")
     except stt.STTUnavailable as e:
         if mid:
@@ -94,6 +102,13 @@ def render() -> None:
                  f'Found <b>{s["tasks"]}</b> action items, <b>{s["decisions"]}</b> decisions and <b>{s["events"]}</b> calendar events. '
                  f'{s["accepted"]} of {s["candidates"]} candidate sentences were trusted directly by classical NLP; {s["uncertain"]} went through the confidence gateway'
                  f'{" and were double-checked by the LLM" if s.get("llm_used") else ""}.</div></div>')
+            for w in last.get("speaker_warnings") or []:
+                st.warning(w)
+            if last.get("identified"):
+                st.success("Voices recognised automatically: " + ", ".join(last["identified"]))
+            anon = [x for x in dict.fromkeys(sg["speaker"] for sg in db.get_segments(last["mid"])) if not nlp.is_real_speaker(x)]
+            if anon:
+                st.info("Some speakers are still anonymous (" + ", ".join(anon[:6]) + "). Open the meeting → Transcript → **Who is who?** to put names on them.")
             if s.get("llm_error"):
                 st.warning("The AI model was unavailable for part of this analysis, so classical NLP results were used. "
                            f"Details: {s['llm_error'][:160]}")
@@ -111,6 +126,9 @@ def render() -> None:
 
     status = stt.provider_status()
     has_stt = bool(status["groq"] or status["assemblyai"] or status["local"])
+    engine = diarize.choose_engine(db.get_setting("speaker_engine", "auto"))
+    engine_label = {"pyannoteai": "pyannote (hosted)", "pyannote-local": "pyannote (local)", "assemblyai": "AssemblyAI"}.get(engine, "")
+    n_voices = len(db.list_voiceprints())
     ai = llm.available_providers()
 
     tab_up, tab_paste = st.tabs(["  Upload a file  ", "  Paste a transcript  "])
@@ -132,11 +150,13 @@ def render() -> None:
             C.md('<div class="mx-card"><h4>Engine status</h4><div class="mx-row">'
                  f'{C.chip("Speech-to-text: " + ("ready" if has_stt else "not configured"), "ok" if has_stt else "warn", "mic")}'
                  f'{C.chip("AI model: " + (", ".join(ai) if ai else "offline mode"), "ok" if ai else "mute", "auto_awesome")}'
-                 f'{C.chip("Diarization: " + ("AssemblyAI" if status["assemblyai"] else "text files only"), "ok" if status["assemblyai"] else "mute", "groups")}</div></div>')
+                 f'{C.chip("Speaker labels: " + (engine_label if engine else "off"), "ok" if engine else "mute", "groups")}'
+                 f'{C.chip(str(n_voices) + " saved voice(s)", "info", "record_voice_over") if engine == "pyannoteai" else ""}</div></div>')
             use_llm = st.toggle("Use AI model to double-check uncertain items", value=bool(ai), disabled=not ai,
                                 help="Off = pure classical NLP, no data leaves this app.")
-            want_spk = st.toggle("Identify speakers (audio)", value=True, disabled=not status["assemblyai"],
-                                 help="Needs a free ASSEMBLYAI_API_KEY. Without it audio is transcribed as a single speaker.")
+            want_spk = st.toggle("Identify who is speaking (audio)", value=True, disabled=not engine,
+                                 help="Uses pyannote to separate the speakers. With saved voice profiles (Settings → Voices) people are named automatically. "
+                                      "Needs a PYANNOTEAI_API_KEY (or a local pyannote setup / AssemblyAI key). Without it audio becomes one speaker.")
         if f is not None:
             ext = f.name.rsplit(".", 1)[-1].lower()
             is_text = ext in SUPPORTED_TEXT

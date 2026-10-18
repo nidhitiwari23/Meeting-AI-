@@ -512,7 +512,7 @@ def extract_event(sent: Sentence, base: date, is_action: bool) -> dict | None:
     title = re.sub(r"^(?:(?:let's|let us|we(?:'ll| will| should| need to| can| are going to)|i(?:'ll| will)|can we|shall we|should we)\s+)?"
                    r"(?:also\s+)?(?:schedule|set up|have|plan|arrange|book|organi[sz]e|hold)\s+(?:a|an|the|another|one)?\s*",
                    "", title, flags=re.I)
-    title = re.sub(r"(?:is|are|will be|has been|was)\s+(?:scheduled|planned|set|booked|going to be held|held|arranged|confirmed)(?:\s+(?:for|on|at))?", "", title, flags=re.I)
+    title = re.sub(r"\b(?:is|are|will be|has been|was)\s+(?:scheduled|planned|set|booked|going to be held|held|arranged|confirmed)\b(?:\s+(?:for|on|at))?", "", title, flags=re.I)
     title = re.sub(r"\s{2,}", " ", title).strip(" ,;-")
     if len(title) < 4:
         title = "Follow-up meeting"

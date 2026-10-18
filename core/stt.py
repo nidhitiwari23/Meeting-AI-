@@ -140,12 +140,15 @@ def _groq_transcribe(file: str, offset: float) -> list[dict]:
             r = requests.post(
                 url, headers={"Authorization": f"Bearer {key}"},
                 files={"file": (os.path.basename(file), fh, "audio/mpeg")},
-                data={"model": model, "response_format": "verbose_json", "temperature": "0",
-                      "timestamp_granularities[]": "segment"},
+                # word timestamps let us split text exactly where the speaker changes (see core/diarize.py)
+                data=[("model", model), ("response_format", "verbose_json"), ("temperature", "0"),
+                      ("timestamp_granularities[]", "segment"), ("timestamp_granularities[]", "word")],
                 timeout=300,
             )
         if r.status_code == 200:
             data = r.json()
+            words = [{"word": w.get("word", ""), "start": offset + float(w["start"]), "end": offset + float(w["end"])}
+                     for w in data.get("words") or [] if "start" in w and "end" in w]
             segs = []
             for s in data.get("segments") or []:
                 text = (s.get("text") or "").strip()
@@ -153,8 +156,9 @@ def _groq_transcribe(file: str, offset: float) -> list[dict]:
                     continue
                 if s.get("no_speech_prob", 0) > 0.85 and s.get("avg_logprob", 0) < -1.0:
                     continue  # likely hallucinated text over silence
-                segs.append({"speaker": "Speaker", "start": offset + float(s["start"]),
-                             "end": offset + float(s["end"]), "text": text})
+                a, b = offset + float(s["start"]), offset + float(s["end"])
+                segs.append({"speaker": "Speaker", "start": a, "end": b, "text": text,
+                             "words": [w for w in words if a - 0.05 <= (w["start"] + w["end"]) / 2 <= b + 0.05]})
             if not segs and data.get("text"):
                 segs.append({"speaker": "Speaker", "start": offset, "end": None, "text": data["text"].strip()})
             return segs
@@ -210,15 +214,17 @@ def _local_transcribe(file: str, offset: float) -> list[dict]:
 
         if "m" not in _local_model:
             _local_model["m"] = WhisperModel(size, device="cpu", compute_type="int8")
-        segs, _ = _local_model["m"].transcribe(file, vad_filter=True)
-        return [{"speaker": "Speaker", "start": offset + s.start, "end": offset + s.end, "text": s.text.strip()}
+        segs, _ = _local_model["m"].transcribe(file, vad_filter=True, word_timestamps=True)
+        return [{"speaker": "Speaker", "start": offset + s.start, "end": offset + s.end, "text": s.text.strip(),
+                 "words": [{"word": w.word, "start": offset + w.start, "end": offset + w.end} for w in (s.words or [])]}
                 for s in segs if s.text.strip()]
     import whisper
 
     if "m" not in _local_model:
         _local_model["m"] = whisper.load_model(size)
-    res = _local_model["m"].transcribe(file, fp16=False)
-    return [{"speaker": "Speaker", "start": offset + s["start"], "end": offset + s["end"], "text": s["text"].strip()}
+    res = _local_model["m"].transcribe(file, fp16=False, word_timestamps=True)
+    return [{"speaker": "Speaker", "start": offset + s["start"], "end": offset + s["end"], "text": s["text"].strip(),
+             "words": [{"word": w["word"], "start": offset + w["start"], "end": offset + w["end"]} for w in s.get("words", [])]}
             for s in res["segments"] if s["text"].strip()]
 
 
@@ -240,32 +246,66 @@ def merge_short_segments(segments: list[dict], max_words: int = 60, max_gap: flo
 
 
 # ---------------------------------------------------------------- public API
-def transcribe(path: str, progress: Callable[[float, str], None] | None = None,
-               preferred: str = "auto", want_speakers: bool = True) -> dict:
-    """Transcribe an audio/video file. Returns {segments, duration, provider}."""
+def transcribe(path: str, progress: Callable[[float, str], None] | None = None, preferred: str = "auto",
+               want_speakers: bool = True, speaker_engine: str = "auto", voiceprints: list[dict] | None = None) -> dict:
+    """Transcribe an audio/video file and (optionally) label who is speaking.
+
+    Speaker engines (see core/diarize.py): pyannoteAI (hosted, can recognise saved voices by name), local pyannote.audio,
+    or AssemblyAI. Returns {segments, duration, provider, speaker_engine, identified, warnings}.
+    """
+    from . import diarize
+
     progress = progress or (lambda f, m: None)
-    provider = choose_provider(preferred, want_speakers)
+    engine = diarize.choose_engine(speaker_engine) if want_speakers else None
+    if engine == "assemblyai":
+        provider = "assemblyai"
+    else:
+        provider = choose_provider(preferred, want_speakers=False)
+        if provider == "assemblyai":     # no Whisper engine at all: AssemblyAI does both jobs
+            engine = "assemblyai"
     duration = probe_duration(path)
     segments: list[dict] = []
+    warnings: list[str] = []
+    identified: dict = {}
     with tempfile.TemporaryDirectory() as tmp:
         if provider == "assemblyai":
             small = path
             try:  # compress first so the upload is quick
-                chunks = make_chunks(path, tmp, chunk_seconds=36000)
-                small = chunks[0][0]
+                small = make_chunks(path, tmp, chunk_seconds=36000)[0][0]
             except Exception:
                 pass
             segments = _assemblyai_transcribe(small, progress)
         else:
             progress(0.03, "Converting audio with FFmpeg")
             chunks = make_chunks(path, tmp)
+            span = 0.7 if engine else 0.92
             for i, (f, off) in enumerate(chunks):
-                progress(0.05 + 0.9 * i / len(chunks), f"Transcribing part {i + 1} of {len(chunks)} ({provider})")
+                progress(0.05 + span * i / len(chunks), f"Transcribing part {i + 1} of {len(chunks)} ({provider})")
                 segments += _groq_transcribe(f, off) if provider == "groq" else _local_transcribe(f, off)
+            if engine in ("pyannoteai", "pyannote-local"):
+                try:
+                    progress(0.77, "Working out who is speaking")
+                    full_dir = os.path.join(tmp, "full")
+                    os.makedirs(full_dir, exist_ok=True)
+                    full = make_chunks(path, full_dir, chunk_seconds=36000)[0][0]
+                    res = diarize.diarize(full, engine, lambda f, m: progress(0.77 + 0.2 * f, m), voiceprints)
+                    segments = diarize.assign_speakers(segments, res.turns)
+                    identified = res.identified
+                    diarize.relabel_generic(segments, protected=set(identified.values()))
+                except diarize.DiarizationError as e:
+                    warnings.append(f"Speaker identification failed, so the transcript has a single speaker: {e}")
+                    engine = None
+                except Exception as e:  # noqa: BLE001
+                    warnings.append(f"Speaker identification failed ({str(e)[:140]}); the transcript has a single speaker.")
+                    engine = None
     progress(1.0, "Transcript ready")
     segments = merge_short_segments(segments)
+    for s in segments:
+        s.pop("words", None)
     if not segments:
         raise RuntimeError("No speech was detected in this recording.")
     if duration is None and segments[-1].get("end"):
         duration = segments[-1]["end"]
-    return {"segments": segments, "duration": duration, "provider": provider}
+    label = provider if not engine or engine == provider else f"{provider}+{engine}"
+    return {"segments": segments, "duration": duration, "provider": label, "speaker_engine": engine,
+            "identified": identified, "warnings": warnings}
