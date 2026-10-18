@@ -25,7 +25,9 @@ def donut(labels: list[str], values: list[int], colors: list[str], center: str) 
     fig = go.Figure(go.Pie(labels=labels, values=values, hole=0.7, marker=dict(colors=colors, line=dict(color="#0A1030", width=3)),
                            textinfo="none", sort=False, hovertemplate="%{label}: %{value} (%{percent})<extra></extra>"))
     fig.add_annotation(text=center, x=0.5, y=0.5, showarrow=False, font=dict(size=26, color="#fff", family="Sora"))
-    return style(fig, 260)
+    style(fig, 270)
+    fig.update_layout(legend=dict(orientation="h", y=-0.05, x=0.5, xanchor="center"), margin=dict(l=8, r=8, t=8, b=36))
+    return fig
 
 
 def hbar(labels: list[str], values: list[int], color: str = VIOLET) -> go.Figure:

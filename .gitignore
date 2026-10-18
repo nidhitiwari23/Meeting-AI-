@@ -10,3 +10,4 @@ data/
 .DS_Store
 .test*/
 .pytest_cache/
+docs/_cache/

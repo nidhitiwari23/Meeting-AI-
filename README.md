@@ -6,7 +6,7 @@ Hybrid design: **classical NLP first** (rules + TF-IDF/Naive Bayes + determinist
 
 🗣️ **Who said what:** audio is split into speakers with **pyannote** (hosted pyannoteAI API, or local `pyannote.audio` via `requirements-local.txt`). Save a person's voice once (**Settings → Voices**) and they appear by name in every future recording; otherwise use the **Who is who?** panel (name suggestions from the conversation).
 
-📘 Full documentation: [`docs/PROJECT_GUIDE.md`](docs/PROJECT_GUIDE.md) (also as `.docx` / `.pdf` in `docs/`).
+📘 **Documentation** (Markdown, Word and PDF in [`docs/`](docs/)): [Project Report](docs/MeetingAI_Project_Report.md) (architecture, diagrams, screenshots, deployment) · [Code Walkthrough](docs/MeetingAI_Code_Walkthrough.md) (every file explained) · [Project Guide](docs/PROJECT_GUIDE.md) (plain-language guide). Rebuild with `python docs/build_docs.py --url <your-app-url>`.
 
 ## Run locally
 

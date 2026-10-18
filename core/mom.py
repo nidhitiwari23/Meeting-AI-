@@ -70,27 +70,35 @@ def generate_markdown(meeting_id: str) -> str:
 # ---------------------------------------------------------------- markdown helpers
 _ITALIC_STAR = r"(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])"
 _ITALIC_UNDER = r"(?<!\w)_(.+?)_(?!\w)"
+_LINK = r"\[([^\]]+)\]\((https?://[^)\s]+)\)"
 
 
-def _inline(s: str, code_fmt: str, bold: str, italic: str) -> str:
-    """Shared inline formatter: `code`, **bold**, *italic*, _italic_ (output markup passed in)."""
+def _inline(s: str, code_fmt: str, bold: str, italic: str, link: str | None = None) -> str:
+    """Shared inline formatter: `code`, [text](url), **bold**, *italic*, _italic_ (output markup passed in)."""
     codes: list[str] = []
+    links: list[tuple[str, str]] = []
 
     def stash(m):
         codes.append(m.group(1))
-        return f"\x00{len(codes) - 1}\x00"
+        return f"\x00c{len(codes) - 1}\x00"
+
+    def stash_link(m):
+        links.append((m.group(1), m.group(2)))
+        return f"\x00l{len(links) - 1}\x00"
 
     s = re.sub(r"`([^`]+)`", stash, s)
+    s = re.sub(_LINK, stash_link, s)
     s = _html.escape(s)
     s = re.sub(r"\*\*(.+?)\*\*", bold, s)
     s = re.sub(_ITALIC_STAR, italic, s)
     s = re.sub(_ITALIC_UNDER, italic, s)
-    return re.sub(r"\x00(\d+)\x00", lambda m: code_fmt.format(_html.escape(codes[int(m.group(1))])), s)
+    s = re.sub(r"\x00l(\d+)\x00", lambda m: (link or "{0} ({1})").format(_html.escape(links[int(m.group(1))][0]), _html.escape(links[int(m.group(1))][1], quote=True)), s)
+    return re.sub(r"\x00c(\d+)\x00", lambda m: code_fmt.format(_html.escape(codes[int(m.group(1))])), s)
 
 
 def _inline_html(s: str) -> str:
     return _inline(s, '<code style="background:#eceefb;padding:1px 5px;border-radius:4px;font-size:.92em">{}</code>',
-                   r"<strong>\1</strong>", r"<em>\1</em>")
+                   r"<strong>\1</strong>", r"<em>\1</em>", '<a href="{1}">{0}</a>')
 
 
 def md_blocks(md: str):
@@ -101,6 +109,11 @@ def md_blocks(md: str):
         ln = lines[i]
         if not ln.strip():
             i += 1
+        elif re.match(r"^!\[(.*?)\]\((.+?)\)\s*$", ln):
+            m_ = re.match(r"^!\[(.*?)\]\((.+?)\)\s*$", ln)
+            yield "img", (m_.group(1), m_.group(2)); i += 1
+        elif ln.strip() == "<pagebreak>":
+            yield "pagebreak", None; i += 1
         elif ln.strip().startswith("```"):
             i += 1
             code = []
@@ -154,6 +167,10 @@ def to_html(md: str) -> str:
             out.append(f'<h2 style="color:#2c3a8c;margin:24px 0 8px;font-size:20px">{_inline_html(p)}</h2>')
         elif kind == "h3":
             out.append(f"<h3>{_inline_html(p)}</h3>")
+        elif kind == "img":
+            out.append(f'<p style="text-align:center"><em>[{_html.escape(p[0])}]</em></p>')
+        elif kind == "pagebreak":
+            pass
         elif kind == "code":
             out.append(f'<pre style="background:#f1f2fb;padding:10px;border-radius:8px;font-size:12px;overflow:auto">{_html.escape(p)}</pre>')
         elif kind == "hr":
@@ -182,6 +199,24 @@ def to_plain(md: str) -> str:
 
 
 # ---------------------------------------------------------------- DOCX
+def _add_hyperlink(par, text: str, url: str):
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    part = par.part
+    r_id = part.relate_to(url, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink", is_external=True)
+    h = OxmlElement("w:hyperlink")
+    h.set(qn("r:id"), r_id)
+    r = OxmlElement("w:r")
+    rpr = OxmlElement("w:rPr")
+    c = OxmlElement("w:color"); c.set(qn("w:val"), "2563EB"); rpr.append(c)
+    u = OxmlElement("w:u"); u.set(qn("w:val"), "single"); rpr.append(u)
+    r.append(rpr)
+    t = OxmlElement("w:t"); t.text = text; r.append(t)
+    h.append(r)
+    par._p.append(h)
+
+
 def _add_runs(par, text: str):
     if "\n" in text:
         for k, line in enumerate(text.split("\n")):
@@ -189,10 +224,13 @@ def _add_runs(par, text: str):
                 par.add_run().add_break()
             _add_runs(par, line)
         return
-    for part in re.split(r"(`[^`]+`|\*\*.+?\*\*|(?<![\w*])\*(?!\s).+?(?<!\s)\*(?![\w*])|(?<!\w)_.+?_(?!\w))", text):
+    for part in re.split(r"(`[^`]+`|\[[^\]]+\]\(https?://[^)\s]+\)|\*\*.+?\*\*|(?<![\w*])\*(?!\s).+?(?<!\s)\*(?![\w*])|(?<!\w)_.+?_(?!\w))", text):
         if not part:
             continue
-        if part.startswith("`") and part.endswith("`") and len(part) > 2:
+        lm = re.fullmatch(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", part)
+        if lm:
+            _add_hyperlink(par, lm.group(1), lm.group(2))
+        elif part.startswith("`") and part.endswith("`") and len(part) > 2:
             r = par.add_run(part[1:-1]); r.font.name = "Consolas"
         elif part.startswith("**") and part.endswith("**") and len(part) > 4:
             r = par.add_run(part[2:-2]); r.bold = True
@@ -204,14 +242,17 @@ def _add_runs(par, text: str):
             par.add_run(part)
 
 
-def to_docx(md: str) -> bytes:
+def to_docx(md: str, base_dir: str | None = None) -> bytes:
     from docx import Document
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
-    from docx.shared import Pt, RGBColor
+    from docx.shared import Inches, Pt, RGBColor
 
     doc = Document()
+    for sec in doc.sections:
+        sec.left_margin = sec.right_margin = Inches(0.9)
+        sec.top_margin = sec.bottom_margin = Inches(0.8)
     st = doc.styles["Normal"]
     st.font.name = "Calibri"
     st.font.size = Pt(11)
@@ -226,6 +267,25 @@ def to_docx(md: str) -> bytes:
             doc.add_heading(p, level=2)
         elif kind == "hr":
             doc.add_paragraph("_" * 60)
+        elif kind == "pagebreak":
+            doc.add_page_break()
+        elif kind == "img":
+            from pathlib import Path as _P
+            from docx.shared import Inches
+
+            alt, rel = p
+            path = _P(base_dir or ".") / rel
+            if path.exists():
+                doc.add_picture(str(path), width=Inches(6.4))
+                doc.paragraphs[-1].alignment = WD_ALIGN_PARAGRAPH.CENTER
+                cap = doc.add_paragraph()
+                cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                run = cap.add_run(alt)
+                run.italic = True
+                run.font.size = Pt(9)
+                run.font.color.rgb = RGBColor(0x64, 0x74, 0x8B)
+            else:
+                doc.add_paragraph(f"[missing image: {rel}]")
         elif kind == "p":
             par = doc.add_paragraph()
             _add_runs(par, p)
@@ -283,7 +343,7 @@ def _pdf_safe(s: str) -> str:
     return s
 
 
-def to_pdf(md: str) -> bytes:
+def to_pdf(md: str, base_dir: str | None = None) -> bytes:
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -298,7 +358,7 @@ def to_pdf(md: str) -> bytes:
     h2 = ParagraphStyle("h2", parent=ss["Heading2"], fontName="Helvetica-Bold", fontSize=13, textColor=colors.HexColor("#2c3a8c"), spaceBefore=12)
 
     def esc(s):
-        return _pdf_safe(_inline(s, '<font name="Courier" size="8.5">{}</font>', r"<b>\1</b>", r"<i>\1</i>"))
+        return _pdf_safe(_inline(s, '<font name="Courier" size="8.5">{}</font>', r"<b>\1</b>", r"<i>\1</i>", '<link href="{1}" color="#2563EB">{0}</link>'))
 
     def widths_for(head, rows, total):
         n = len(head)
@@ -319,6 +379,23 @@ def to_pdf(md: str) -> bytes:
             story.append(Paragraph(esc(p), h2))
         elif kind == "hr":
             story.append(HRFlowable(width="100%", color=colors.lightgrey))
+        elif kind == "pagebreak":
+            from reportlab.platypus import PageBreak
+
+            story.append(PageBreak())
+        elif kind == "img":
+            from pathlib import Path as _P
+            from PIL import Image as _PI
+            from reportlab.platypus import Image as RLImage, KeepTogether
+
+            alt, rel = p
+            path = _P(base_dir or ".") / rel
+            if path.exists():
+                w0, h0 = _PI.open(path).size
+                maxw, maxh = A4[0] - 40 * mm, 205 * mm
+                sc = min(maxw / w0, maxh / h0)
+                cap = ParagraphStyle("cap", parent=body, fontSize=8.5, textColor=colors.HexColor("#64748B"), alignment=1, fontName="Helvetica-Oblique")
+                story.append(KeepTogether([RLImage(str(path), width=w0 * sc, height=h0 * sc), Paragraph(esc(alt), cap), Spacer(1, 8)]))
         elif kind == "code":
             from reportlab.platypus import Preformatted
 
