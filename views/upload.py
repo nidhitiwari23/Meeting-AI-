@@ -7,7 +7,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from core import db, diarize, llm, nlp, parsing, pipeline, stt
+from core import db, diarize, llm, nlp, parsing, pipeline, speakers, stt
 from core.config import MAX_UPLOAD_MB, SUPPORTED_AUDIO, SUPPORTED_TEXT, SUPPORTED_VIDEO, UPLOAD_DIR
 from ui import components as C, nav
 
@@ -24,7 +24,7 @@ def _pretty_title(name: str) -> str:
 
 
 def _run(title: str, meeting_date: date, tags: str, notes: str, file_name: str | None, data: bytes | None, text: str | None,
-         want_speakers: bool, use_llm: bool) -> None:
+         want_speakers: bool, use_llm: bool, attendee_text: str = "", auto_names: bool = True) -> None:
     holder = st.empty()
     prog = st.progress(0.0)
     status_line = st.empty()
@@ -40,6 +40,9 @@ def _run(title: str, meeting_date: date, tags: str, notes: str, file_name: str |
     mid = None
     speaker_warnings: list[str] = []
     identified: dict = {}
+    auto_applied: dict = {}
+    auto_left: dict = {}
+    voiceprints_used = db.list_voiceprints() if (want_speakers and not (text is not None or (file_name or '').rsplit('.', 1)[-1].lower() in SUPPORTED_TEXT)) else []
     try:
         show(0.01, "Saving your upload")
         meta: dict = {}
@@ -53,6 +56,7 @@ def _run(title: str, meeting_date: date, tags: str, notes: str, file_name: str |
         final_title = title.strip() or meta.get("title") or _pretty_title(file_name or "pasted transcript")
         final_date = meta.get("date") or meeting_date.isoformat()
         mid = db.create_meeting(final_title, final_date, source, file_name, None, tags, notes)
+        typed = [a.strip() for a in re.split(r"[,\n;]+", attendee_text or "") if a.strip()]
         if meta.get("attendees"):
             db.update_meeting(mid, attendees=meta["attendees"])
         if not is_text:
@@ -61,17 +65,30 @@ def _run(title: str, meeting_date: date, tags: str, notes: str, file_name: str |
             db.update_meeting(mid, file_path=str(path))
             res = stt.transcribe(str(path), progress=lambda f, m: show(f, m, 0.03, 0.17), preferred=db.get_setting("stt_pref", "auto"),
                                  want_speakers=want_speakers, speaker_engine=db.get_setting("speaker_engine", "auto"),
-                                 voiceprints=db.list_voiceprints() if want_speakers else None)
+                                 voiceprints=voiceprints_used or None)
             segments, provider, duration = res["segments"], res["provider"], res["duration"]
             speaker_warnings, identified = res.get("warnings", []), res.get("identified", {})
             if identified:
                 db.update_meeting(mid, attendees=sorted(set(identified.values())))
+        # Put names on speakers that the voice profiles did not recognise, using what people say in the conversation
+        if auto_names and any(not nlp.is_real_speaker(sg["speaker"] or "Speaker") for sg in segments):
+            show(0.19, "Looking for speaker names in the conversation")
+            pool = list(dict.fromkeys(typed + list(meta.get("attendees") or []) + sorted(set(identified.values()))))
+            try:
+                auto_applied, auto_left = speakers.auto_name(segments, pool, final_title, use_llm)
+            except Exception:  # noqa: BLE001 - naming is a bonus; never block the analysis
+                auto_applied, auto_left = {}, {}
+        if typed or auto_applied:
+            people = list(dict.fromkeys(typed + list(meta.get("attendees") or []) + sorted(set(identified.values())) + [c["name"] for c in auto_applied.values()]))
+            db.update_meeting(mid, attendees=people)
         db.replace_segments(mid, segments)
         db.update_meeting(mid, stt_provider=provider or "text", duration_sec=duration)
         out = pipeline.process_meeting(mid, lambda f, m: show(f, m, 0.2, 0.8), use_llm=use_llm)
         show(1.0, "Done")
         st.session_state["last_result"] = {"mid": mid, "stats": out.stats, "speaker_warnings": speaker_warnings,
-                                           "identified": sorted(set(identified.values()))}
+                                           "identified": sorted(set(identified.values())),
+                                           "auto_named": [(old, c["name"], c["why"]) for old, c in auto_applied.items()],
+                                           "had_attendees": bool(typed), "voices": len(voiceprints_used)}
         st.toast("Meeting analysed", icon="✅")
     except stt.STTUnavailable as e:
         if mid:
@@ -106,9 +123,17 @@ def render() -> None:
                 st.warning(w)
             if last.get("identified"):
                 st.success("Voices recognised automatically: " + ", ".join(last["identified"]))
+            if last.get("auto_named"):
+                st.success("Names found in the conversation: " + "; ".join(f"{o} → **{n}** ({w})" for o, n, w in last["auto_named"]) +
+                           ". Wrong? Fix it under Transcript → Who is who?")
             anon = [x for x in dict.fromkeys(sg["speaker"] for sg in db.get_segments(last["mid"])) if not nlp.is_real_speaker(x)]
             if anon:
-                st.info("Some speakers are still anonymous (" + ", ".join(anon[:6]) + "). Open the meeting → Transcript → **Who is who?** to put names on them.")
+                why = []
+                if not last.get("voices"):
+                    why.append("no saved voice profiles yet (Settings → Voices) - pyannote can separate voices but only knows names for enrolled voices")
+                why.append("nobody introduced themselves clearly (\"Hi, I'm Priya\")" + ("" if last.get("had_attendees") else " and no attendee names were typed"))
+                st.info("Still anonymous: " + ", ".join(anon[:6]) + ". Why: " + "; ".join(why) +
+                        ". Open the meeting → Transcript → **Who is who?** to name them (one click each, optionally saving the voice for next time).")
             if s.get("llm_error"):
                 st.warning("The AI model was unavailable for part of this analysis, so classical NLP results were used. "
                            f"Details: {s['llm_error'][:160]}")
@@ -142,6 +167,9 @@ def render() -> None:
             c1, c2 = st.columns(2)
             mdate = c1.date_input("Meeting date", value=date.today(), key="up_date")
             tags = c2.text_input("Tags", placeholder="e.g. product, weekly", key="up_tags")
+            attendees_in = st.text_input("Who attended? (optional, comma-separated)", placeholder="e.g. Priya Nair, Rahul Mehta, Anita Sharma", key="up_attendees",
+                                         help="pyannote only knows 'Speaker 1, Speaker 2'. Real names come from saved voices or from the conversation. "
+                                              "Typing the attendees lets MeetingAI match names it hears ('Thanks Priya') to the right voice.")
             notes = st.text_area("Notes (optional)", height=70, key="up_notes")
         with right:
             C.md('<div class="mx-card"><h4>What happens next</h4><div class="mx-sub">'
@@ -154,6 +182,8 @@ def render() -> None:
                  f'{C.chip(str(n_voices) + " saved voice(s)", "info", "record_voice_over") if engine == "pyannoteai" else ""}</div></div>')
             use_llm = st.toggle("Use AI model to double-check uncertain items", value=bool(ai), disabled=not ai,
                                 help="Off = pure classical NLP, no data leaves this app.")
+            auto_nm = st.toggle("Auto-name speakers from the conversation", value=True,
+                                help="Applies a name when someone clearly introduces themselves ('Hi, I'm Priya'). Weaker clues stay as suggestions in Who is who.")
             want_spk = st.toggle("Identify who is speaking (audio)", value=True, disabled=not engine,
                                  help="Uses pyannote to separate the speakers. With saved voice profiles (Settings → Voices) people are named automatically. "
                                       "Needs a PYANNOTEAI_API_KEY (or a local pyannote setup / AssemblyAI key). Without it audio becomes one speaker.")
@@ -170,7 +200,7 @@ def render() -> None:
                 st.error(f"This file is {size_mb:.0f} MB; the limit is {MAX_UPLOAD_MB} MB.")
             elif st.button("Analyse meeting", type="primary", use_container_width=True, key="up_go",
                            disabled=(not is_text and not has_stt)):
-                _run(title, mdate, tags, notes, f.name, f.getvalue(), None, want_spk, use_llm)
+                _run(title, mdate, tags, notes, f.name, f.getvalue(), None, want_spk, use_llm, attendees_in, auto_nm)
         else:
             C.md('<div class="mx-muted">Tip: transcripts can contain lines like <code>[00:12] Priya: I will send the report by Friday.</code> '
                  'and header lines such as <code>Meeting:</code>, <code>Date:</code>, <code>Attendees:</code>.</div>')
@@ -182,4 +212,4 @@ def render() -> None:
         ptitle = pc1.text_input("Meeting title", key="up_ptitle", placeholder="Weekly sync")
         pdate = pc2.date_input("Meeting date", value=date.today(), key="up_pdate")
         if st.button("Analyse transcript", type="primary", key="up_pgo", disabled=len((txt or "").strip()) < 20):
-            _run(ptitle, pdate, "", "", None, None, txt, False, bool(ai))
+            _run(ptitle, pdate, "", "", None, None, txt, False, bool(ai), "", True)

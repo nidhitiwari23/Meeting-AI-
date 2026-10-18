@@ -238,3 +238,14 @@ def test_voice_profile_storage():
     assert [(v["name"], v["voiceprint"]) for v in db.list_voiceprints()] == [("Priya Nair", "def")]
     db.delete_voiceprint("Priya Nair")
     assert db.list_voiceprints() == []
+
+
+def test_auto_name_applies_only_clear_introductions():
+    segs = [{"speaker": "Speaker 1", "text": "Hi everyone, I'm Priya Nair and I will lead the demo.", "start": 0, "end": 4},
+            {"speaker": "Speaker 2", "text": "Thanks. Rahul, can you share the numbers?", "start": 5, "end": 8},
+            {"speaker": "Speaker 3", "text": "Sure, the numbers look fine.", "start": 9, "end": 11}]
+    applied, left = speakers.auto_name(segs, ["Priya Nair", "Rahul Mehta"], use_llm=False)
+    assert applied["Speaker 1"]["name"] == "Priya Nair"
+    assert segs[0]["speaker"] == "Priya Nair"
+    assert segs[2]["speaker"] == "Speaker 3"            # only 'addressed' evidence -> stays a suggestion, not applied
+    assert left["Speaker 3"]["name"] == "Rahul Mehta"

@@ -159,6 +159,26 @@ def suggest(segments: list[dict], attendees: list[str], title: str = "", use_llm
     return res
 
 
+AUTO_MIN_CONFIDENCE = 0.75   # a clear self-introduction ("I'm Priya") scores 0.81; "addressed" / "thanked" alone stay as suggestions
+
+
+def auto_name(segments: list[dict], attendees: list[str], title: str = "", use_llm: bool = True,
+              min_conf: float = AUTO_MIN_CONFIDENCE) -> tuple[dict[str, dict], dict[str, dict]]:
+    """Rename anonymous speakers in ``segments`` (in place) when the transcript clearly shows who they are.
+
+    Returns (applied, left_over) as {old_label: {name, confidence, why, method}}. Weaker guesses are returned in ``left_over``
+    so the UI can still offer them under "Who is who?".
+    """
+    sug = suggest(segments, attendees, title, use_llm)
+    applied = {sp: c for sp, c in sug.items() if c["confidence"] >= min_conf}
+    left = {sp: c for sp, c in sug.items() if sp not in applied}
+    if applied:
+        for s in segments:
+            if (s["speaker"] or "Speaker") in applied:
+                s["speaker"] = applied[s["speaker"] or "Speaker"]["name"]
+    return applied, left
+
+
 def speaker_samples(segments: list[dict], n: int = 2) -> dict[str, list[dict]]:
     """Longest few lines per speaker - used to show 'what did this person say' next to the naming form."""
     by: dict[str, list[dict]] = defaultdict(list)
